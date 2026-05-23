@@ -1,0 +1,20 @@
+{
+  "name": "eishockey-social-prediction",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vollständig lokal laufendes Social Prediction Dashboard für Deutschland vs. Österreich (IIHF WM 2026).",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "refresh": "node src/cli-refresh.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "fast-xml-parser": "^5.0.0",
+    "undici": "^7.0.0"
+  }
+}

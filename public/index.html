@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Social Prediction · Deutschland vs. Österreich</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🏒</text></svg>" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="puck">🏒</span>
+          <div>
+            <div class="brand-title">Social Prediction Dashboard</div>
+            <div class="brand-sub" id="tournament">IIHF WM 2026</div>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="updated" id="updated">–</div>
+          <button id="refreshBtn" class="btn" title="Jetzt aktualisieren">⟳ Aktualisieren</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="card matchup" id="matchup">
+          <div class="team team-home">
+            <div class="flag" id="homeFlag">🇩🇪</div>
+            <div class="team-name" id="homeName">Deutschland</div>
+            <div class="team-prob" id="homeProb">–</div>
+          </div>
+          <div class="vs-block">
+            <div class="vs">vs</div>
+            <div class="countdown" id="countdown">–</div>
+            <div class="kickoff" id="kickoff">–</div>
+            <div class="venue" id="venue">–</div>
+            <div class="uncertainty" id="uncertainty"></div>
+            <div class="momentum" id="momentum"></div>
+          </div>
+          <div class="team team-away">
+            <div class="flag" id="awayFlag">🇦🇹</div>
+            <div class="team-name" id="awayName">Österreich</div>
+            <div class="team-prob" id="awayProb">–</div>
+          </div>
+        </section>
+
+        <section class="probbar-wrap card">
+          <div class="probbar" id="probbar">
+            <div class="probbar-home" id="probbarHome"></div>
+            <div class="probbar-band" id="probbarBand" title="Unsicherheitsband"></div>
+            <div class="probbar-away" id="probbarAway"></div>
+          </div>
+          <div class="probbar-legend">
+            <span><b id="legendHome">GER</b> soziale Gewinnwahrscheinlichkeit</span>
+            <span class="favorite-tag" id="favoriteTag"></span>
+            <span><b id="legendAway">AUT</b></span>
+          </div>
+        </section>
+
+        <div id="liveBanner" class="banner hidden"></div>
+
+        <div class="grid">
+          <section class="card">
+            <h2>Ergebnisprognose <span class="count">erwartete Tore</span></h2>
+            <div class="expscore-row">
+              <div class="expscore" id="expScore">–:–</div>
+              <div class="expscore-meta">
+                <div id="lambdaLine" class="muted small">–</div>
+                <div id="modalLine" class="muted small">–</div>
+              </div>
+            </div>
+            <div class="reg-label muted small">Ausgang in regulärer Spielzeit</div>
+            <div class="regbar" id="regbar">
+              <div class="reg-ger" id="regGer"></div>
+              <div class="reg-draw" id="regDraw"></div>
+              <div class="reg-aut" id="regAut"></div>
+            </div>
+            <div class="reg-legend" id="regLegend"></div>
+            <div class="muted small" style="margin-top:12px">Wahrscheinlichste Ergebnisse</div>
+            <div id="topScorelines" class="scorelines"></div>
+          </section>
+
+          <section class="card">
+            <h2>Signale</h2>
+            <p class="muted small">Fusion per Logit-Pooling (Log-Odds). Effektives Gewicht = Basisgewicht × Konfidenz; Quoten als Markt-Anker verstärkt. Werte = P(Deutschland gewinnt).</p>
+            <div id="signals" class="signals"></div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <section class="card">
+            <h2>Buzz, Momentum &amp; Textprognosen</h2>
+            <div class="muted small">Aufmerksamkeit je Team (recency- &amp; glaubwürdigkeitsgewichtet)</div>
+            <div class="probbar buzzbar" id="buzzbar">
+              <div class="probbar-home" id="buzzGer"></div>
+              <div class="probbar-away" id="buzzAut"></div>
+            </div>
+            <div class="probbar-legend"><span id="buzzGerLbl">GER</span><span id="buzzAutLbl">AUT</span></div>
+            <div id="analyticsExtra" class="analytics-extra"></div>
+          </section>
+
+          <section class="card">
+            <h2>Risikofaktoren &amp; Kontext</h2>
+            <p class="muted small">Aus Artikeln/Posts erkannt: Verletzungen, Sperren, Torwart-Themen, Comebacks.</p>
+            <div class="risk-grid">
+              <div><div class="risk-head" id="riskHeadGer">🇩🇪 Deutschland</div><div id="riskGer"></div></div>
+              <div><div class="risk-head" id="riskHeadAut">🇦🇹 Österreich</div><div id="riskAut"></div></div>
+            </div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <section class="card">
+            <h2>Quellenstatus</h2>
+            <p class="muted small">Ausschließlich öffentliche RSS/Atom-, Reddit-JSON- und HTML-Quellen. Kein API-Key.</p>
+            <div id="sources" class="sources"></div>
+            <div class="spark-wrap">
+              <div class="muted small">Verlauf P(GER)</div>
+              <svg id="spark" class="spark" viewBox="0 0 300 48" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
+          <section class="card">
+            <h2>Wettquoten <span class="count" id="oddsCount"></span></h2>
+            <div id="odds" class="feed"></div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <section class="card">
+            <h2>Medienartikel <span class="count" id="newsCount"></span></h2>
+            <div id="news" class="feed"></div>
+          </section>
+          <section class="card">
+            <h2>Reddit <span class="count" id="redditCount"></span></h2>
+            <div id="reddit" class="feed"></div>
+          </section>
+        </div>
+
+        <section class="card">
+          <h2>Experten-/Tipp-Prognosen <span class="count" id="expertsCount"></span></h2>
+          <div id="experts" class="feed feed-wide"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>Vollständig lokal · keine kostenpflichtigen Dienste · <code>127.0.0.1:4712</code></span>
+        <span id="genState" class="muted"></span>
+      </footer>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
