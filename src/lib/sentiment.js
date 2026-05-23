@@ -186,26 +186,36 @@ export function analyze(text = "") {
 }
 
 /**
- * Aggregiert die Sentiment-Analysen mehrerer Items zu einem Signal:
- * P(GER gewinnt) ∈ [0,1] aus der Differenz der mittleren Team-Sentiments.
- * @param {Array<{title?:string,summary?:string}>} items
+ * Aggregiert mehrere Items zu einem Signal: P(GER gewinnt) ∈ [0,1] aus der
+ * (gewichteten) Differenz der mittleren Team-Sentiments. Liegt eine
+ * Annotation (item.analysis + item.weight) vor, wird sie wiederverwendet und
+ * das Item nach Aktualität/Glaubwürdigkeit/Engagement gewichtet; sonst wird
+ * ungewichtet frisch analysiert.
+ * @param {Array<{title?:string,summary?:string,weight?:number,analysis?:object}>} items
  * @returns {{pGER:number,n:number,ger:number,aut:number,mentionsGER:number,mentionsAUT:number}}
  */
 export function sentimentSignal(items) {
-  let gerSum = 0, gerCount = 0, autSum = 0, autCount = 0, contributed = 0;
+  let gerNum = 0, gerDen = 0, autNum = 0, autDen = 0;
+  let mentionsGER = 0, mentionsAUT = 0, contributed = 0;
   for (const it of items) {
-    const a = analyze(`${it.title || ""}. ${it.summary || ""}`);
-    const hasGER = a.perTeam.GER.count > 0;
-    const hasAUT = a.perTeam.AUT.count > 0;
-    if (hasGER) { gerSum += a.perTeam.GER.mean; gerCount += 1; }
-    if (hasAUT) { autSum += a.perTeam.AUT.mean; autCount += 1; }
-    if (hasGER || hasAUT) contributed += 1;
+    let gMean, gCount, aMean, aCount, w;
+    if (it.analysis) {
+      gMean = it.analysis.gerMean; gCount = it.analysis.gerCount;
+      aMean = it.analysis.autMean; aCount = it.analysis.autCount;
+      w = it.weight ?? 1;
+    } else {
+      const a = analyze(`${it.title || ""}. ${it.summary || ""}`);
+      gMean = a.perTeam.GER.mean; gCount = a.perTeam.GER.count;
+      aMean = a.perTeam.AUT.mean; aCount = a.perTeam.AUT.count;
+      w = 1;
+    }
+    if (gCount) { gerNum += w * gMean; gerDen += w; mentionsGER += 1; }
+    if (aCount) { autNum += w * aMean; autDen += w; mentionsAUT += 1; }
+    if (gCount || aCount) contributed += 1;
   }
-  const ger = gerCount ? gerSum / gerCount : 0;
-  const aut = autCount ? autSum / autCount : 0;
-  // n = Anzahl Items mit Teambezug (für die Konfidenzgewichtung).
-  const n = contributed;
+  const ger = gerDen ? gerNum / gerDen : 0;
+  const aut = autDen ? autNum / autDen : 0;
   // Differenz der Sentiments -> Wahrscheinlichkeit via Logistik.
   const pGER = 1 / (1 + Math.exp(-1.6 * (ger - aut)));
-  return { pGER, n, ger, aut, mentionsGER: gerCount, mentionsAUT: autCount };
+  return { pGER, n: contributed, ger, aut, mentionsGER, mentionsAUT };
 }

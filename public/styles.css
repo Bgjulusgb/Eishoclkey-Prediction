@@ -156,9 +156,65 @@ body {
 .footer { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; color: var(--muted); font-size: 12px; flex-wrap: wrap; gap: 8px; }
 code { background: var(--card2); padding: 1px 6px; border-radius: 6px; }
 
+/* Uncertainty + momentum (im vs-block) */
+.uncertainty { margin-top: 10px; font-size: 12px; color: var(--muted); }
+.uncertainty b { color: var(--text); }
+.momentum { margin-top: 2px; font-size: 12px; font-weight: 600; }
+.momentum.up { color: var(--ok); }
+.momentum.down { color: var(--err); }
+.momentum.flat { color: var(--muted); }
+
+/* Probbar-Unsicherheitsband */
+.probbar { position: relative; }
+.probbar-band {
+  position: absolute; top: -3px; bottom: -3px; background: rgba(232,237,255,0.16);
+  border-left: 2px solid rgba(232,237,255,0.5); border-right: 2px solid rgba(232,237,255,0.5);
+  pointer-events: none;
+}
+.buzzbar { height: 20px; margin-top: 8px; }
+
+/* Ergebnisprognose */
+.expscore-row { display: flex; align-items: center; gap: 16px; margin: 4px 0 12px; }
+.expscore {
+  font-size: 44px; font-weight: 800; font-variant-numeric: tabular-nums;
+  background: linear-gradient(90deg, var(--ger), var(--aut)); -webkit-background-clip: text;
+  background-clip: text; color: transparent; line-height: 1;
+}
+.expscore-meta { line-height: 1.5; }
+.reg-label { margin-top: 6px; }
+.regbar { display: flex; height: 20px; border-radius: 999px; overflow: hidden; border: 1px solid var(--line); margin: 5px 0; }
+.reg-ger { background: linear-gradient(90deg, var(--ger2), var(--ger)); }
+.reg-draw { background: #44507e; }
+.reg-aut { background: linear-gradient(90deg, var(--aut), var(--aut2)); }
+.reg-legend { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.scorelines { display: flex; flex-direction: column; gap: 5px; margin-top: 6px; }
+.scoreline { display: grid; grid-template-columns: 46px 1fr 48px; align-items: center; gap: 8px; font-size: 12px; }
+.scoreline-score { font-variant-numeric: tabular-nums; font-weight: 600; }
+.scoreline-bar { height: 8px; border-radius: 999px; background: var(--card2); overflow: hidden; }
+.scoreline-fill { height: 100%; background: linear-gradient(90deg, #6d7bb0, #aab4e0); }
+.scoreline-p { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Analytics extra */
+.analytics-extra { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.analytics-extra .row { display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.analytics-extra .k { color: var(--muted); }
+.analytics-extra .v { font-weight: 600; text-align: right; }
+
+/* Risk */
+.risk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.risk-head { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.risk-cat { margin-bottom: 8px; }
+.risk-cat-label { font-size: 12px; }
+.risk-snippet { font-size: 11px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 8px; margin-top: 3px; }
+.risk-none { color: var(--muted); font-size: 12px; font-style: italic; }
+
+.feed-wide { max-height: 360px; }
+.weight-chip { font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+
 @media (max-width: 760px) {
   .grid { grid-template-columns: 1fr; }
   .matchup { grid-template-columns: 1fr; }
   .vs-block { order: -1; }
   .team-prob { font-size: 38px; }
+  .risk-grid { grid-template-columns: 1fr; }
 }

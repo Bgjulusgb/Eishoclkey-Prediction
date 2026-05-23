@@ -33,7 +33,8 @@ export async function refresh(reason = "scheduled") {
   log.info("store", `Aktualisierung gestartet (${reason})`);
   try {
     const sources = await collectAll();
-    const prediction = computeProbability(sources);
+    const prevPGER = state.history.length ? state.history[state.history.length - 1].pGER : undefined;
+    const prediction = computeProbability(sources, { prevPGER });
     state.sources = sources;
     state.prediction = prediction;
     state.generatedAt = new Date().toISOString();

@@ -1,176 +1,157 @@
 // Zentrale Konfiguration des Social-Prediction-Dashboards.
 //
-// Diese Datei ist der einzige Ort, an dem Annahmen ("Priors") und Quellen
-// bewusst hinterlegt sind. Alles andere im Programm wird zur Laufzeit aus
-// öffentlich zugänglichen Quellen gesammelt. Werte hier dürfen frei
-// angepasst werden – sie beeinflussen nur den Ausgangswert, sobald Live-Daten
-// vorliegen, dominieren diese.
+// Einziger Ort für Annahmen ("Priors") und Quellen. Alles Übrige wird zur
+// Laufzeit aus öffentlich zugänglichen Quellen gesammelt. Kein API-Key, kein
+// OAuth, kein kostenpflichtiger Dienst.
 
-export const SERVER = {
-  host: "127.0.0.1",
-  port: 4712,
-};
+export const SERVER = { host: "127.0.0.1", port: 4712 };
 
-// Aktualisierungsintervall der Sammler (Millisekunden). Default: 10 Minuten.
-// Bewusst nicht aggressiv, um öffentliche Quellen zu schonen.
+// Aktualisierungsintervall der Sammler (ms). Default: 10 Minuten.
 export const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
 // Pro-Request-Timeout für alle Netzwerkzugriffe.
 export const REQUEST_TIMEOUT_MS = 12_000;
+
+// Max. gleichzeitige Netzwerk-Requests (höflich gegenüber öffentlichen Quellen).
+export const FETCH_CONCURRENCY = 6;
 
 export const GAME = {
   tournament: "IIHF WM 2026 – Gruppe A",
   home: "Deutschland",
   away: "Österreich",
   venue: "Swiss Life Arena, Zürich",
-  // 23. Mai 2026, 20:15 MESZ == 18:15 UTC
-  startUTC: "2026-05-23T18:15:00Z",
+  neutralVenue: true, // Zürich ist für beide neutral -> kein Heimvorteil
+  startUTC: "2026-05-23T18:15:00Z", // 20:15 MESZ
   timezoneLabel: "MESZ (UTC+2)",
 };
 
-// Teamdefinitionen samt Alias-Listen für die Texterkennung in Artikeln,
-// Reddit-Posts und Prognosen. Alle Aliase werden klein und akzentbereinigt
-// verglichen (siehe lib/text.js).
 export const TEAMS = {
   GER: {
-    code: "GER",
-    name: "Deutschland",
-    short: "GER",
-    flag: "🇩🇪",
-    aliases: [
-      "deutschland",
-      "germany",
-      "german",
-      "deutsch",
-      "deutsche",
-      "deutschen",
-      "deb",
-      "deb-team",
-      "die deutschen",
-    ],
+    code: "GER", name: "Deutschland", short: "GER", flag: "🇩🇪",
+    aliases: ["deutschland", "germany", "german", "deutsch", "deutsche", "deutschen", "deb", "deb-team", "die deutschen", "dfb-adler", "adler"],
   },
   AUT: {
-    code: "AUT",
-    name: "Österreich",
-    short: "AUT",
-    flag: "🇦🇹",
-    aliases: [
-      "osterreich",
-      "oesterreich",
-      "austria",
-      "austrian",
-      "austrians",
-      "oehv",
-      "die osterreicher",
-      "rot-weiss-rot",
-      "rot weiss rot",
-    ],
+    code: "AUT", name: "Österreich", short: "AUT", flag: "🇦🇹",
+    aliases: ["osterreich", "oesterreich", "austria", "austrian", "austrians", "oehv", "die osterreicher", "rot-weiss-rot", "rot weiss rot"],
   },
 };
 
 // --- Prior / Annahmen (frei editierbar) -----------------------------------
-// Stärkebewertung im Stil einer Elo-Zahl. Quelle: grobe Einordnung anhand der
-// IIHF-Weltrangliste der letzten Jahre (Deutschland Top-10, Österreich
-// Mittelfeld). Dies ist eine ANNAHME, keine gescrapte Zahl, und dient nur als
-// Ausgangswert, falls (noch) keine Live-Signale vorliegen.
+// Stärkebewertung im Elo-Stil. Grobe Einordnung nach IIHF-Weltrangliste
+// (Deutschland Top-10, Österreich Mittelfeld). ANNAHME, keine gescrapte Zahl.
 export const PRIOR = {
   ratings: { GER: 1520, AUT: 1405 },
-  // Logistische Skala (wie Elo): 400 Punkte ~ Faktor 10 in den Quoten.
   ratingScale: 400,
-  // Aktuelle Form als kontextueller Nudge. Werte aus der Aufgabenstellung:
-  // Österreich 3 Siege / 1 Niederlage, u. a. 9:0 gegen die Schweiz.
-  // formScore in etwa [-1..+1]; positiver Wert = gute Form.
+  // Aktuelle Form (aus der Aufgabenstellung): Österreich 3 Siege / 1 Niederlage,
+  // u. a. 9:0 gegen die Schweiz. score in etwa [-1..+1].
   form: {
     GER: { wins: null, losses: null, score: 0.0, note: "Form nicht angegeben" },
-    AUT: {
-      wins: 3,
-      losses: 1,
-      score: 0.55,
-      note: "3 Siege / 1 Niederlage, u. a. 9:0 gegen die Schweiz",
-    },
+    AUT: { wins: 3, losses: 1, score: 0.55, note: "3 Siege / 1 Niederlage, u. a. 9:0 gegen die Schweiz" },
   },
-  // Wie stark der Formunterschied den Prior verschiebt (max. ~Anteil).
   formWeight: 0.12,
 };
 
-// Gewichtung der Signale in der Endwahrscheinlichkeit. Werden zur Laufzeit mit
-// einer datenabhängigen Konfidenz multipliziert (wenig Daten -> wenig Einfluss).
+// --- Signal-Fusion --------------------------------------------------------
+// Kombinationsmethode: "logit" = log-lineares Opinion-Pooling (im Log-Odds-Raum),
+// wissenschaftlich sauber für die Aggregation von Wahrscheinlichkeiten.
+// "linear" = gewichteter Mittelwert (einfacher, weniger kalibriert).
+export const COMBINATION = "logit";
+
+// Basisgewichte der Signale. Werden zur Laufzeit mit datenabhängiger Konfidenz
+// c = n/(n+k) multipliziert (wenig Daten -> wenig Einfluss).
 export const SIGNAL_WEIGHTS = {
-  market: 0.4, // Wettquoten = am besten informiertes Signal
-  experts: 0.25, // Experten-/Tipp-Prognosen
-  news: 0.2, // Mediensentiment
-  reddit: 0.1, // Community-Sentiment
-  prior: 0.05, // Form/Stärke-Annahme (immer vorhanden)
+  market: 0.42, // Wettquoten = bestes, marktkalibriertes Signal (Anker)
+  experts: 0.23, // Experten-/Tipp-Prognosen (inkl. expliziter Prozentangaben)
+  news: 0.18, // Mediensentiment (recency- & glaubwürdigkeitsgewichtet)
+  reddit: 0.1, // Community-Sentiment (engagementgewichtet)
+  prior: 0.07, // Form/Stärke-Annahme (immer vorhanden)
 };
 
-// Sättigungskonstante k für die Konfidenz c = n / (n + k) je Signal.
-// Größeres k => mehr Datenpunkte nötig, bis ein Signal voll zählt.
-export const CONFIDENCE_SATURATION = {
-  market: 2,
-  experts: 4,
-  news: 8,
-  reddit: 10,
+// Markt-Anker: Sind Quoten vorhanden, wird ihr effektives Gewicht zusätzlich
+// um diesen Faktor verstärkt (Quoten sind per Konstruktion kalibriert).
+export const MARKET_ANCHOR_BOOST = 1.6;
+
+// Sättigungskonstante k für die Konfidenz c = n/(n+k) je Signal.
+export const CONFIDENCE_SATURATION = { market: 2, experts: 4, news: 8, reddit: 10 };
+
+// --- Auswertung / Analyse -------------------------------------------------
+// Recency-Gewichtung: Halbwertszeit der Aktualität in Stunden.
+export const RECENCY = { halfLifeHours: 36, noDateWeight: 0.5 };
+
+// Glaubwürdigkeit nach Quelle (Name-/Domain-Stichwort -> Faktor). Default 1.
+// Basisfaktor je Quellentyp wird in lib/annotate.js gesetzt.
+export const CREDIBILITY = {
+  base: { news: 1.0, reddit: 0.8, expert: 1.2, odds: 1.0 },
+  keywords: {
+    iihf: 1.4, "the athletic": 1.4, espn: 1.3, tsn: 1.3, nhl: 1.2,
+    "eishockey news": 1.35, eishockeynews: 1.35, hockeyweb: 1.25, "sport.orf": 1.3, orf: 1.25,
+    sport1: 1.2, kicker: 1.25, sky: 1.2, ran: 1.15, sportschau: 1.25, "laola1": 1.15,
+    krone: 0.95, bild: 0.95, blog: 0.85, forum: 0.8, fan: 0.85,
+  },
+};
+
+// Risiko-/Kontext-Schlüsselwörter (DE/EN) für die Faktor-Extraktion je Team.
+export const RISK_KEYWORDS = {
+  injury: ["verletzt", "verletzung", "verletzungssorgen", "angeschlagen", "ausfall", "ausfalle", "fraglich", "injury", "injured", "sidelined", "doubtful", "out"],
+  suspension: ["gesperrt", "sperre", "suspendiert", "suspension", "banned", "suspended"],
+  goalie: ["torwart", "torhuter", "goalie", "keeper", "schlussmann", "starting goalie"],
+  boost: ["comeback", "kehrt zuruck", "returns", "fit", "back in", "rueckkehr", "ruckkehr"],
+};
+
+// Erwartete-Tore-Modell (Poisson/Skellam) -> Ergebnisprognose.
+export const GOALS = {
+  expectedTotal: 6.2, // erwartete Gesamttore (IIHF-Schnitt grob), editierbar
+  maxGoals: 12, // Obergrenze der Tor-Verteilung
+  topN: 6, // wie viele wahrscheinlichste Ergebnisse anzeigen
 };
 
 // --- Quellen --------------------------------------------------------------
-// Ausschließlich öffentlich zugängliche RSS/Atom-Feeds und HTML-Seiten.
-// Kein API-Key, kein OAuth, kein kostenpflichtiger Dienst.
-
-const newsQueries = [
-  "Deutschland Österreich Eishockey WM",
-  "IIHF WM 2026 Deutschland Österreich",
-  "Germany Austria ice hockey World Championship",
-];
+const GN = (q, { hl = "de", gl = "DE", ceid = "DE:de" } = {}) =>
+  "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + `&hl=${hl}&gl=${gl}&ceid=${ceid}`;
 
 export const SOURCES = {
-  // Google News RSS (kein Key). hl/gl/ceid steuern Sprache & Region.
-  googleNews: newsQueries.map((q) => ({
-    query: q,
-    url:
-      "https://news.google.com/rss/search?q=" +
-      encodeURIComponent(q) +
-      "&hl=de&gl=DE&ceid=DE:de",
-  })),
+  // Google News RSS (kein Key): mehrere Sprach-/Regionen-Editionen + Themen.
+  googleNews: [
+    { query: "Deutschland Österreich Eishockey WM", url: GN("Deutschland Österreich Eishockey WM") },
+    { query: "IIHF WM 2026 Deutschland Österreich", url: GN("IIHF WM 2026 Deutschland Österreich") },
+    { query: "Deutschland Österreich Aufstellung Verletzung Eishockey", url: GN("Deutschland Österreich Aufstellung Verletzung Eishockey") },
+    { query: "Österreich Eishockey WM 2026 (AT-Edition)", url: GN("Österreich Deutschland Eishockey WM", { hl: "de", gl: "AT", ceid: "AT:de" }) },
+    { query: "Germany Austria ice hockey World Championship (EN)", url: GN("Germany Austria ice hockey World Championship 2026", { hl: "en-US", gl: "US", ceid: "US:en" }) },
+    { query: "Germany Austria IIHF preview lineup injury (EN)", url: GN("Germany Austria IIHF 2026 preview lineup injury", { hl: "en-US", gl: "US", ceid: "US:en" }) },
+  ],
 
-  // Reddit-Subreddit- und Such-RSS (kein Key). .rss liefert Atom.
+  // Reddit: JSON bevorzugt (liefert Upvotes/Kommentare -> Engagement), RSS als
+  // Fallback. Beide ohne Key.
   reddit: [
-    { name: "r/hockey (Suche)", url: "https://www.reddit.com/r/hockey/search.rss?q=Germany+Austria+IIHF&restrict_sr=1&sort=new" },
-    { name: "r/icehockey", url: "https://www.reddit.com/r/icehockey/.rss" },
-    { name: "r/iihf", url: "https://www.reddit.com/r/iihf/.rss" },
-    { name: "r/Eishockey", url: "https://www.reddit.com/r/Eishockey/.rss" },
+    { name: "reddit (Suche)", json: "https://www.reddit.com/search.json?q=Germany+Austria+IIHF&sort=new&limit=25", rss: "https://www.reddit.com/search.rss?q=Germany+Austria+IIHF&sort=new" },
+    { name: "r/hockey (Suche)", json: "https://www.reddit.com/r/hockey/search.json?q=Germany+Austria+IIHF&restrict_sr=1&sort=new&limit=25", rss: "https://www.reddit.com/r/hockey/search.rss?q=Germany+Austria+IIHF&restrict_sr=1&sort=new" },
+    { name: "r/icehockey", json: "https://www.reddit.com/r/icehockey/new.json?limit=25", rss: "https://www.reddit.com/r/icehockey/.rss" },
+    { name: "r/iihf", json: "https://www.reddit.com/r/iihf/new.json?limit=25", rss: "https://www.reddit.com/r/iihf/.rss" },
+    { name: "r/Eishockey", json: "https://www.reddit.com/r/Eishockey/new.json?limit=25", rss: "https://www.reddit.com/r/Eishockey/.rss" },
   ],
 
-  // HTML-Scraping öffentlicher Prognose-/Tippseiten. Selektoren sind bewusst
-  // defensiv; ändert eine Seite ihr Markup, liefert der Sammler einfach nichts
-  // (statt abzustürzen). Zusätzlich greift ein RSS-basierter Prognose-Fallback.
+  // Experten-/Tipp-Prognosen: RSS-Prognosesuche (DE/EN) + optionales HTML-Scraping.
   expertPages: [
-    {
-      name: "Google News (Prognose/Tipp)",
-      type: "rss",
-      url:
-        "https://news.google.com/rss/search?q=" +
-        encodeURIComponent("Deutschland Österreich Eishockey Prognose Tipp Favorit") +
-        "&hl=de&gl=DE&ceid=DE:de",
-    },
+    { name: "Google News: Prognose/Tipp/Favorit", type: "rss", url: GN("Deutschland Österreich Eishockey Prognose Tipp Favorit Vorschau") },
+    { name: "Google News: prediction/odds/preview (EN)", type: "rss", url: GN("Germany Austria hockey prediction preview odds", { hl: "en-US", gl: "US", ceid: "US:en" }) },
+    // Beispiel für HTML-Scraping einer Tippseite (anpassbar):
+    // { name: "Tippseite", type: "html", url: "https://...", itemSelector: ".tip", titleSelector: "h3", linkSelector: "a" },
   ],
 
-  // HTML-Scraping öffentlicher Wettseiten. Wettquoten-Seiten sind häufig
-  // Cloudflare-geschützt; schlägt der Abruf fehl, bleibt das Signal leer.
-  // decimalSelector: CSS-Selektor, der die Dezimalquoten in Reihenfolge
-  // [Heim/GER, (Unentschieden), Gast/AUT] liefert.
+  // Wettquoten: HTML-Scraping. MECHANISMUS FERTIG, standardmäßig ohne aktive
+  // URL (Wettseiten sind oft Cloudflare-geschützt und ändern ihr Markup).
+  // Eigenen Buchmacher hier ergänzen:
+  //   { name, url, decimalSelector: CSS, teamOrder: ["GER","AUT"] | ["GER","DRAW","AUT"] }
   oddsPages: [
-    // Beispielhafter, anpassbarer Eintrag. Standardmäßig leer gelassen, da
-    // konkrete Wett-URLs erst zum Spieltag stabil sind.
     // {
     //   name: "Beispiel-Buchmacher",
-    //   url: "https://www.example-odds.com/...",
-    //   decimalSelector: ".odds-value",
+    //   url: "https://www.example-odds.com/match/ger-aut",
+    //   decimalSelector: ".odds .value",
     //   teamOrder: ["GER", "AUT"],
     // },
   ],
 };
 
-// Browserähnlicher User-Agent, damit RSS/HTML-Endpunkte nicht blocken.
 export const USER_AGENT =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-  "Chrome/124.0.0.0 Safari/537.36 SocialPredictionDashboard/1.0";
+  "Chrome/124.0.0.0 Safari/537.36 SocialPredictionDashboard/2.0";

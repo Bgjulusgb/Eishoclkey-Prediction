@@ -5,7 +5,8 @@ const RESET = "\x1b[0m";
 function emit(level, scope, msg) {
   const ts = new Date().toISOString().slice(11, 19);
   const color = COLORS[level] || "";
-  console.log(`${color}${ts} ${level.toUpperCase().padEnd(5)}${RESET} [${scope}] ${msg}`);
+  // Logs nach stderr, damit stdout (z. B. JSON aus cli-refresh) sauber bleibt.
+  console.error(`${color}${ts} ${level.toUpperCase().padEnd(5)}${RESET} [${scope}] ${msg}`);
 }
 
 export const log = {

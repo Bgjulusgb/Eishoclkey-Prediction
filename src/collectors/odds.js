@@ -4,14 +4,15 @@
 //
 // Hinweis: Wettseiten sind oft Cloudflare-geschützt und ändern ihr Markup.
 // Schlägt der Abruf fehl oder passt der Selektor nicht, bleibt das Signal leer
-// (kein Absturz). Konkrete Seiten werden in config.js (SOURCES.oddsPages)
-// hinterlegt.
+// (kein Absturz). Konkrete Seiten in config.js (SOURCES.oddsPages) hinterlegen.
 import * as cheerio from "cheerio";
-import { SOURCES } from "../config.js";
+import { SOURCES, FETCH_CONCURRENCY } from "../config.js";
 import { fetchText, shortUrl } from "../lib/http.js";
+import { mapLimit } from "../lib/concurrency.js";
 import { log } from "../lib/log.js";
 
 const PLAUSIBLE = (o) => Number.isFinite(o) && o >= 1.01 && o <= 51;
+const round = (n, d = 3) => Math.round(n * 10 ** d) / 10 ** d;
 
 function parseDecimal(str) {
   const v = parseFloat(String(str).replace(",", ".").replace(/[^0-9.]/g, ""));
@@ -19,26 +20,22 @@ function parseDecimal(str) {
 }
 
 // Implizite Wahrscheinlichkeit P(GER) aus Dezimalquoten, Vig entfernt.
-// Bei 3-Wege-Markt (mit Unentschieden) wird auf den 2-Wege-Ausgang (GER/AUT)
-// normalisiert, das Remis also proportional aufgeteilt.
+// 3-Wege-Markt (mit Remis) wird auf den 2-Wege-Ausgang normalisiert.
 function impliedFromBook(odds, teamOrder) {
-  const idxGER = teamOrder.indexOf("GER");
-  const idxAUT = teamOrder.indexOf("AUT");
-  if (idxGER < 0 || idxAUT < 0) return null;
-  const oGER = odds[idxGER];
-  const oAUT = odds[idxAUT];
+  const iGER = teamOrder.indexOf("GER");
+  const iAUT = teamOrder.indexOf("AUT");
+  if (iGER < 0 || iAUT < 0) return null;
+  const oGER = odds[iGER], oAUT = odds[iAUT];
   if (!PLAUSIBLE(oGER) || !PLAUSIBLE(oAUT)) return null;
-  const invGER = 1 / oGER;
-  const invAUT = 1 / oAUT;
-  const pGER = invGER / (invGER + invAUT);
-  return { oddsGER: oGER, oddsAUT: oAUT, pGER };
+  const invGER = 1 / oGER, invAUT = 1 / oAUT;
+  // Overround als Indikator der Buchmacher-Marge (informativ).
+  const overround = odds.reduce((a, o) => a + (PLAUSIBLE(o) ? 1 / o : 0), 0);
+  return { oddsGER: oGER, oddsAUT: oAUT, pGER: invGER / (invGER + invAUT), overround };
 }
 
 async function scrapeBook(src) {
   const res = await fetchText(src.url);
-  if (!res.ok) {
-    return { endpoint: { name: src.name, url: shortUrl(src.url), status: "error", count: 0, error: res.error }, book: null };
-  }
+  if (!res.ok) return { endpoint: { name: src.name, url: shortUrl(src.url), status: "error", count: 0, error: res.error }, book: null };
   try {
     const $ = cheerio.load(res.body);
     const values = [];
@@ -47,53 +44,36 @@ async function scrapeBook(src) {
       if (PLAUSIBLE(v)) values.push(v);
     });
     const teamOrder = src.teamOrder || ["GER", "AUT"];
-    const odds = values.slice(0, teamOrder.length);
-    const implied = impliedFromBook(odds, teamOrder);
-    if (!implied) {
-      return { endpoint: { name: src.name, url: shortUrl(src.url), status: "empty", count: 0 }, book: null };
-    }
-    return {
-      endpoint: { name: src.name, url: shortUrl(src.url), status: "ok", count: 1 },
-      book: { name: src.name, ...implied },
-    };
+    const implied = impliedFromBook(values.slice(0, teamOrder.length), teamOrder);
+    if (!implied) return { endpoint: { name: src.name, url: shortUrl(src.url), status: "empty", count: 0 }, book: null };
+    return { endpoint: { name: src.name, url: shortUrl(src.url), status: "ok", count: 1 }, book: { name: src.name, ...implied } };
   } catch (err) {
     return { endpoint: { name: src.name, url: shortUrl(src.url), status: "error", count: 0, error: err.message }, book: null };
   }
 }
 
 export async function collectOdds() {
-  const endpoints = [];
-  const books = [];
-
-  for (const src of SOURCES.oddsPages) {
-    const { endpoint, book } = await scrapeBook(src);
-    endpoints.push(endpoint);
-    if (book) books.push(book);
-  }
+  const results = await mapLimit(SOURCES.oddsPages, FETCH_CONCURRENCY, scrapeBook);
+  const endpoints = results.map((r) => r.endpoint);
+  const books = results.map((r) => r.book).filter(Boolean);
 
   const n = books.length;
   const pGER = n ? books.reduce((s, b) => s + b.pGER, 0) / n : 0.5;
+  const ps = books.map((b) => b.pGER);
+  const spread = n ? round(Math.max(...ps) - Math.min(...ps), 3) : 0;
+  const avgOverround = n ? round(books.reduce((s, b) => s + b.overround, 0) / n, 3) : null;
   const status = n ? "ok" : SOURCES.oddsPages.length ? "error" : "empty";
 
-  if (SOURCES.oddsPages.length === 0) {
-    log.info("odds", "keine Wettseiten konfiguriert (SOURCES.oddsPages) – Signal inaktiv");
-  } else {
-    log.info("odds", `${n}/${SOURCES.oddsPages.length} Buchmacher gelesen (Status: ${status})`);
-  }
+  if (SOURCES.oddsPages.length === 0) log.info("odds", "keine Wettseiten konfiguriert (SOURCES.oddsPages) – Signal inaktiv");
+  else log.info("odds", `${n}/${SOURCES.oddsPages.length} Buchmacher gelesen (Status: ${status})`);
 
   return {
-    key: "odds",
-    label: "Wettquoten (HTML-Scraping)",
-    status,
-    fetched: new Date().toISOString(),
-    endpoints,
+    key: "odds", label: "Wettquoten (HTML-Scraping)", status, fetched: new Date().toISOString(), endpoints,
     items: books.map((b) => ({
       title: b.name,
-      summary: `GER ${b.oddsGER.toFixed(2)} : ${b.oddsAUT.toFixed(2)} AUT  →  P(GER)=${(b.pGER * 100).toFixed(1)}%`,
-      link: "",
-      sourceType: "odds",
-      pGER: b.pGER,
+      summary: `GER ${b.oddsGER.toFixed(2)} : ${b.oddsAUT.toFixed(2)} AUT → P(GER)=${(b.pGER * 100).toFixed(1)}% (Overround ${(b.overround * 100).toFixed(1)}%)`,
+      link: "", sourceType: "odds", pGER: round(b.pGER, 3),
     })),
-    signal: { pGER, n },
+    signal: { pGER: round(pGER, 4), n, spread, avgOverround },
   };
 }

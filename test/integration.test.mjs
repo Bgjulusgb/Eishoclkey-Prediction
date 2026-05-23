@@ -1,164 +1,207 @@
-// Offline-Integrationstest: startet einen lokalen Fixture-Server und lenkt die
-// Sammler per In-Place-Mutation der SOURCES darauf. Damit wird die komplette
-// Pipeline (HTTP inkl. Redirect, RSS/Atom-Parsing, Sentiment, Odds-Scraping,
-// Wahrscheinlichkeits-Engine) ohne externe Netzzugriffe geprüft.
+// Offline-Integrationstest: lokaler Fixture-Server + In-Place-Mutation der
+// SOURCES. Prüft die komplette Pipeline ohne externe Netzzugriffe:
+// HTTP/Redirect, RSS/Atom + Reddit-JSON, Sentiment, Extraktion (Ergebnisse/
+// Prozente/Risiken), Recency/Glaubwürdigkeit/Engagement, Logit-Fusion,
+// Unsicherheit, Analyse-Kennzahlen und das Erwartete-Tore-Modell.
 //
-// Die Inhalte hier sind klar erkennbare TESTDATEN – keine echten Prognosen.
+// Inhalte hier sind klar erkennbare TESTDATEN.
 import http from "node:http";
 import assert from "node:assert/strict";
-import { SOURCES } from "../src/config.js";
+import { SOURCES, GOALS } from "../src/config.js";
 import { fetchText } from "../src/lib/http.js";
-import { parseFeed } from "../src/lib/rss.js";
 import { analyze, sentimentSignal } from "../src/lib/sentiment.js";
+import { recencyWeight } from "../src/lib/recency.js";
+import { credibility } from "../src/lib/credibility.js";
+import { extractScorelines, extractPercentages, extractRiskFactors } from "../src/lib/extract.js";
+import { expectedGoals } from "../src/engine/goals.js";
+import { computeProbability } from "../src/engine/probability.js";
+
+const recent = (hAgo) => new Date(Date.now() - hAgo * 3600_000).toUTCString();
 
 const NEWS_RSS = `<?xml version="1.0"?>
-<rss version="2.0"><channel><title>Test News</title>
-  <item><title>Deutschland geht als klarer Favorit ins Spiel</title>
+<rss version="2.0"><channel><title>Test</title>
+  <item><title>Deutschland geht als klarer Favorit ins Spiel - Kicker</title>
     <description>Die Deutschen sind ueberlegen und dominieren die Gruppe.</description>
-    <link>http://x/n1</link><pubDate>Fri, 23 May 2026 10:00:00 GMT</pubDate></item>
-  <item><title>Oesterreich droht gegen Deutschland eine Niederlage</title>
-    <description>Oesterreich gilt als Aussenseiter und ist chancenlos.</description>
-    <link>http://x/n2</link><pubDate>Fri, 23 May 2026 09:00:00 GMT</pubDate></item>
-  <item><title>Deutschland gewinnt Test souveraen</title>
+    <link>http://x/n1</link><pubDate>${recent(2)}</pubDate></item>
+  <item><title>Oesterreich bangt um verletzten Verteidiger - ORF</title>
+    <description>Der angeschlagene Verteidiger ist fraglich, Oesterreich droht ein Ausfall.</description>
+    <link>http://x/n2</link><pubDate>${recent(3)}</pubDate></item>
+  <item><title>Deutschland gewinnt Test souveraen - Sport1</title>
     <description>Starke und ueberzeugende Vorstellung der deutschen Mannschaft.</description>
-    <link>http://x/n3</link><pubDate>Fri, 23 May 2026 08:00:00 GMT</pubDate></item>
+    <link>http://x/n3</link><pubDate>${recent(5)}</pubDate></item>
 </channel></rss>`;
 
-const REDDIT_ATOM = `<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom"><title>r/test</title>
-  <entry><title>Germany looks dominant against Austria</title>
-    <link href="http://x/r1"/><updated>2026-05-23T07:00:00Z</updated>
-    <content type="html">&lt;p&gt;Germany is strong. Austria struggles and is the underdog.&lt;/p&gt;</content>
-    <author><name>u/test</name></author></entry>
-  <entry><title>Austria hockey hype after big win</title>
-    <link href="http://x/r2"/><updated>2026-05-23T06:00:00Z</updated>
-    <content type="html">Austria is confident and strong.</content></entry>
-</feed>`;
+const REDDIT_JSON = JSON.stringify({
+  data: { children: [
+    { kind: "t3", data: { title: "Germany looks dominant against Austria", permalink: "/r/hockey/a",
+      selftext: "Germany is strong. Austria struggles and is the underdog.", score: 250, num_comments: 40,
+      created_utc: Math.floor(Date.now() / 1000) - 3600, subreddit: "hockey" } },
+    { kind: "t3", data: { title: "Austria hype after big win over Germany", permalink: "/r/hockey/b",
+      selftext: "Austria is confident and strong.", score: 4, num_comments: 1,
+      created_utc: Math.floor(Date.now() / 1000) - 7200, subreddit: "hockey" } },
+  ] },
+});
 
 const EXPERTS_RSS = `<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Tipps</title>
-  <item><title>Prognose: Deutschland gewinnt klar gegen Oesterreich</title><link>http://x/e1</link></item>
-  <item><title>Tipp: Oesterreich ueberrascht und gewinnt</title><link>http://x/e2</link></item>
-  <item><title>Experten sehen Deutschland als Favorit</title><link>http://x/e3</link></item>
+  <item><title>Prognose: Deutschland gewinnt 4:2 gegen Oesterreich</title><link>http://x/e1</link><pubDate>${recent(4)}</pubDate></item>
+  <item><title>Experten sehen Deutschland bei 65% Siegchance</title><link>http://x/e2</link><pubDate>${recent(4)}</pubDate></item>
+  <item><title>Tipp: Oesterreich ueberrascht und gewinnt</title><link>http://x/e3</link><pubDate>${recent(6)}</pubDate></item>
 </channel></rss>`;
 
-const ODDS_HTML = `<!doctype html><html><body>
-  <table><tr>
-    <td class="odds-value">1.50</td>
-    <td class="odds-value">2.60</td>
-  </tr></table></body></html>`;
+const ODDS_HTML = `<!doctype html><html><body><table><tr>
+  <td class="odds-value">1.50</td><td class="odds-value">2.60</td>
+</tr></table></body></html>`;
 
 function startFixtureServer() {
   const server = http.createServer((req, res) => {
-    const send = (body, type = "application/xml; charset=utf-8") => {
-      res.writeHead(200, { "content-type": type });
-      res.end(body);
-    };
-    if (req.url.startsWith("/redirect")) {
-      res.writeHead(302, { location: "/news.rss" });
-      return res.end();
-    }
+    const send = (b, t = "application/xml; charset=utf-8") => { res.writeHead(200, { "content-type": t }); res.end(b); };
+    if (req.url.startsWith("/redirect")) { res.writeHead(302, { location: "/news.rss" }); return res.end(); }
     if (req.url.startsWith("/news")) return send(NEWS_RSS);
-    if (req.url.startsWith("/reddit")) return send(REDDIT_ATOM);
+    if (req.url.startsWith("/reddit.json")) return send(REDDIT_JSON, "application/json");
+    if (req.url.startsWith("/reddit")) return send(REDDIT_JSON, "application/json");
     if (req.url.startsWith("/experts")) return send(EXPERTS_RSS);
     if (req.url.startsWith("/odds")) return send(ODDS_HTML, "text/html; charset=utf-8");
     res.writeHead(404).end("nope");
   });
-  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server)));
+  return new Promise((r) => server.listen(0, "127.0.0.1", () => r(server)));
 }
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
-// --- Unit-nahe Bausteine ---------------------------------------------------
+// --- Sentiment -------------------------------------------------------------
 test("Sentiment ordnet Lob dem genannten Team zu", () => {
   const a = analyze("Deutschland ist klarer Favorit und dominiert.");
-  assert.ok(a.perTeam.GER.mean > 0.2, `GER mean ${a.perTeam.GER.mean}`);
+  assert.ok(a.perTeam.GER.mean > 0.2);
   assert.equal(a.perTeam.AUT.count, 0);
 });
-
 test("Negation kehrt Polaritaet um", () => {
-  const pos = analyze("Deutschland ist stark.").perTeam.GER.mean;
-  const neg = analyze("Deutschland ist nicht stark.").perTeam.GER.mean;
-  assert.ok(neg < pos, `neg ${neg} sollte < pos ${pos} sein`);
+  assert.ok(analyze("Deutschland ist nicht stark.").perTeam.GER.mean < analyze("Deutschland ist stark.").perTeam.GER.mean);
+});
+test("Richtungssatz: A gewinnt gegen B -> A+, B-", () => {
+  const a = analyze("Deutschland gewinnt klar gegen Oesterreich.");
+  assert.ok(a.perTeam.GER.mean > 0 && a.perTeam.AUT.mean < 0);
+});
+test("sentimentSignal gewichtet annotierte Items", () => {
+  const items = [
+    { analysis: { gerMean: 0.8, gerCount: 1, autMean: 0, autCount: 0 }, weight: 3 },
+    { analysis: { gerMean: 0, gerCount: 0, autMean: 0.5, autCount: 1 }, weight: 0.2 },
+  ];
+  const s = sentimentSignal(items);
+  assert.equal(s.n, 2);
+  assert.ok(s.pGER > 0.6, `pGER ${s.pGER}`);
 });
 
-test("sentimentSignal liefert pGER>0.5 wenn GER positiver bewertet wird", () => {
-  const items = [
-    { title: "Deutschland dominiert", summary: "ueberlegen und stark" },
-    { title: "Oesterreich chancenlos", summary: "schwach und Aussenseiter" },
-  ];
-  const sig = sentimentSignal(items);
-  assert.ok(sig.pGER > 0.5, `pGER ${sig.pGER}`);
-  assert.equal(sig.n, 2);
+// --- Recency / Credibility -------------------------------------------------
+test("Recency: neuer schlaegt aelter", () => {
+  const now = Date.now();
+  assert.ok(recencyWeight(new Date(now).toISOString(), now) > recencyWeight(new Date(now - 48 * 3600_000).toISOString(), now));
+});
+test("Credibility: bekannte Quelle > unbekannt, news-Basis > reddit-Basis", () => {
+  assert.ok(credibility("news", "Kicker", "http://kicker.de/x") > credibility("news", "Randomblog", "http://random.example/x"));
+  assert.ok(credibility("news", "x", "") > credibility("reddit", "x", ""));
+});
+
+// --- Extraktion ------------------------------------------------------------
+test("Ergebnis-Extraktion (beide Teams flankieren)", () => {
+  assert.deepEqual(extractScorelines("Deutschland gewinnt 4:2 gegen Oesterreich"), [{ ger: 4, aut: 2 }]);
+});
+test("Ergebnis-Extraktion ignoriert Uhrzeiten (20:15)", () => {
+  assert.equal(extractScorelines("Anpfiff um 20:15 Uhr in Zuerich").length, 0);
+});
+test("Prozent-Extraktion ordnet Team zu", () => {
+  assert.deepEqual(extractPercentages("Deutschland bei 65% Favorit"), [{ team: "GER", p: 0.65 }]);
+});
+test("Risiko-Extraktion erkennt Verletzung beim Team", () => {
+  const r = extractRiskFactors("Oesterreich bangt um verletzten Verteidiger.");
+  assert.ok(r.AUT.injury.length >= 1 && r.GER.injury.length === 0);
+});
+
+// --- Erwartete Tore (Poisson/Skellam) --------------------------------------
+test("expectedGoals reproduziert die Siegwahrscheinlichkeit", () => {
+  const g = expectedGoals(0.5);
+  assert.ok(Math.abs(g.twoWayGER - 0.5) < 0.02, `twoWay ${g.twoWayGER}`);
+  assert.ok(Math.abs(g.lambdaGER - g.lambdaAUT) < 0.1);
+  const sum = g.regulation.ger + g.regulation.draw + g.regulation.aut;
+  assert.ok(Math.abs(sum - 1) < 0.02, `reg sum ${sum}`);
+});
+test("expectedGoals: hoehere pGER -> mehr GER-Tore", () => {
+  const g = expectedGoals(0.72);
+  assert.ok(g.lambdaGER > g.lambdaAUT);
+  assert.ok(Math.abs(g.twoWayGER - 0.72) < 0.02);
+  assert.equal(g.topScorelines.length, GOALS.topN);
+});
+
+// --- Logit-Fusion ----------------------------------------------------------
+test("Logit-Pooling + Markt-Anker: starke Quote dominiert", () => {
+  const pred = computeProbability({ odds: { signal: { pGER: 0.8, n: 3 } } });
+  assert.equal(pred.meta.combination, "logit");
+  assert.equal(pred.favorite, "GER");
+  assert.ok(pred.pGER > 0.65, `pGER ${pred.pGER}`);
+  assert.ok(pred.uncertainty.low < pred.pGER && pred.pGER < pred.uncertainty.high);
 });
 
 // --- Volle Pipeline gegen lokale Fixtures ----------------------------------
-test("End-to-End: Sammler + Engine gegen lokale Fixtures (inkl. Redirect)", async () => {
+test("End-to-End inkl. Extraktion, Engagement, Tore", async () => {
   const server = await startFixtureServer();
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
-    // fetchText folgt dem 302-Redirect.
     const r = await fetchText(`${base}/redirect`);
-    assert.ok(r.ok && r.body.includes("Favorit"), "Redirect wurde nicht gefolgt");
+    assert.ok(r.ok && r.body.includes("Favorit"), "Redirect nicht gefolgt");
 
-    // SOURCES in-place auf Fixtures umlenken (gleiche Objektreferenz wie in den Sammlern).
     SOURCES.googleNews.length = 0;
     SOURCES.googleNews.push({ query: "test", url: `${base}/news.rss` });
     SOURCES.reddit.length = 0;
-    SOURCES.reddit.push({ name: "r/test", url: `${base}/reddit.atom` });
+    SOURCES.reddit.push({ name: "r/test", json: `${base}/reddit.json`, rss: `${base}/reddit.atom` });
     SOURCES.expertPages.length = 0;
     SOURCES.expertPages.push({ name: "tips", type: "rss", url: `${base}/experts.rss` });
     SOURCES.oddsPages.length = 0;
     SOURCES.oddsPages.push({ name: "TestBook", url: `${base}/odds.html`, decimalSelector: ".odds-value", teamOrder: ["GER", "AUT"] });
 
-    // Sammler erst NACH der Mutation importieren/aufrufen.
     const { collectAll } = await import("../src/collectors/index.js");
-    const { computeProbability, computePrior } = await import("../src/engine/probability.js");
-
     const data = await collectAll();
-    assert.equal(data.news.status, "ok", "news sollte ok sein");
-    assert.ok(data.news.items.length >= 2, `news items ${data.news.items.length}`);
-    assert.equal(data.reddit.status, "ok", "reddit sollte ok sein");
-    assert.ok(data.reddit.items.length >= 1, `reddit items ${data.reddit.items.length}`);
 
-    // Experten: 2x GER, 1x AUT -> pGER ~ 0.667
-    assert.equal(data.experts.signal.n, 3);
-    assert.ok(Math.abs(data.experts.signal.pGER - 2 / 3) < 0.01, `experts pGER ${data.experts.signal.pGER}`);
+    assert.equal(data.news.status, "ok");
+    assert.equal(data.reddit.status, "ok");
+    // Reddit-JSON: Engagement-Gewicht beim viralen Post deutlich > 1.
+    const viral = data.reddit.items.find((i) => /dominant/i.test(i.title));
+    assert.ok(viral && viral.analysis.engagementW > 1.5, `engagementW ${viral?.analysis.engagementW}`);
+    // Publisher aus Google-News-Titel extrahiert.
+    assert.ok(data.news.items.some((i) => i.source === "Kicker"));
 
-    // Odds: 1.50 vs 2.60 -> implied pGER ~ 0.634
-    assert.equal(data.odds.signal.n, 1);
-    const expectedOdds = 1 / 1.5 / (1 / 1.5 + 1 / 2.6);
-    assert.ok(Math.abs(data.odds.signal.pGER - expectedOdds) < 0.005, `odds pGER ${data.odds.signal.pGER}`);
+    // Odds: 1.50 vs 2.60 -> ~0.634
+    const expOdds = 1 / 1.5 / (1 / 1.5 + 1 / 2.6);
+    assert.ok(Math.abs(data.odds.signal.pGER - expOdds) < 0.005);
 
-    // Engine: alle vier Live-Signale aktiv, Endwert plausibel (GER favorisiert).
-    const pred = computeProbability(data);
-    assert.equal(pred.meta.activeLiveSignals, 4, "alle Live-Signale sollten aktiv sein");
-    assert.ok(pred.meta.liveContribution > 0.5, `liveContribution ${pred.meta.liveContribution}`);
-    assert.ok(pred.pGER > 0.5 && pred.pGER < 0.85, `finale pGER ${pred.pGER}`);
+    const pred = computeProbability(data, { prevPGER: 0.5 });
+    assert.equal(pred.meta.activeLiveSignals, 4);
+    assert.equal(pred.meta.combination, "logit");
     assert.equal(pred.favorite, "GER");
-    assert.ok(Math.abs(pred.pGER + pred.pAUT - 1) < 1e-9, "pGER+pAUT muss 1 ergeben");
+    assert.ok(typeof pred.meta.momentum === "number");
 
-    // Prior bleibt deterministisch.
-    const prior = computePrior();
-    assert.ok(prior.pGER > 0.55 && prior.pGER < 0.62, `prior ${prior.pGER}`);
+    // Analyse-Kennzahlen.
+    assert.equal(pred.analytics.scoreConsensus.mostCommon, "4:2");
+    assert.ok(pred.analytics.explicitPercentages.n >= 1);
+    assert.ok(Math.abs(pred.analytics.explicitPercentages.p - 0.65) < 0.06, `explicit ${pred.analytics.explicitPercentages.p}`);
+    assert.ok(pred.analytics.risk.AUT.injury.count >= 1);
+    assert.ok(pred.analytics.buzz.GER > 0 && pred.analytics.buzz.AUT > 0);
+
+    // Tore-Modell konsistent zur Endwahrscheinlichkeit.
+    assert.ok(Math.abs(pred.goals.twoWayGER - pred.pGER) < 0.03, `goals ${pred.goals.twoWayGER} vs ${pred.pGER}`);
+    assert.equal(pred.goals.topScorelines.length, GOALS.topN);
+    const regSum = pred.goals.regulation.ger + pred.goals.regulation.draw + pred.goals.regulation.aut;
+    assert.ok(Math.abs(regSum - 1) < 0.02);
   } finally {
     server.close();
   }
 });
 
 // --- Runner ----------------------------------------------------------------
-let passed = 0;
-let failed = 0;
+let pass = 0, fail = 0;
 for (const [name, fn] of tests) {
-  try {
-    await fn();
-    passed += 1;
-    console.log(`\x1b[32mPASS\x1b[0m ${name}`);
-  } catch (err) {
-    failed += 1;
-    console.log(`\x1b[31mFAIL\x1b[0m ${name}\n      ${err.message}`);
-  }
+  try { await fn(); pass++; console.log(`\x1b[32mPASS\x1b[0m ${name}`); }
+  catch (e) { fail++; console.log(`\x1b[31mFAIL\x1b[0m ${name}\n      ${e.message}`); }
 }
-console.log(`\n${passed} bestanden, ${failed} fehlgeschlagen`);
-process.exit(failed ? 1 : 0);
+console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
+process.exit(fail ? 1 : 0);
