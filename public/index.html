@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Social Prediction · Deutschland vs. Österreich</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🏒</text></svg>" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="puck">🏒</span>
+          <div>
+            <div class="brand-title">Social Prediction Dashboard</div>
+            <div class="brand-sub" id="tournament">IIHF WM 2026</div>
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="updated" id="updated">–</div>
+          <button id="refreshBtn" class="btn" title="Jetzt aktualisieren">⟳ Aktualisieren</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="card matchup" id="matchup">
+          <div class="team team-home">
+            <div class="flag" id="homeFlag">🇩🇪</div>
+            <div class="team-name" id="homeName">Deutschland</div>
+            <div class="team-prob" id="homeProb">–</div>
+          </div>
+          <div class="vs-block">
+            <div class="vs">vs</div>
+            <div class="countdown" id="countdown">–</div>
+            <div class="kickoff" id="kickoff">–</div>
+            <div class="venue" id="venue">–</div>
+          </div>
+          <div class="team team-away">
+            <div class="flag" id="awayFlag">🇦🇹</div>
+            <div class="team-name" id="awayName">Österreich</div>
+            <div class="team-prob" id="awayProb">–</div>
+          </div>
+        </section>
+
+        <section class="probbar-wrap card">
+          <div class="probbar" id="probbar">
+            <div class="probbar-home" id="probbarHome"></div>
+            <div class="probbar-away" id="probbarAway"></div>
+          </div>
+          <div class="probbar-legend">
+            <span><b id="legendHome">GER</b> soziale Gewinnwahrscheinlichkeit</span>
+            <span class="favorite-tag" id="favoriteTag"></span>
+            <span><b id="legendAway">AUT</b></span>
+          </div>
+        </section>
+
+        <div id="liveBanner" class="banner hidden"></div>
+
+        <div class="grid">
+          <section class="card">
+            <h2>Signale</h2>
+            <p class="muted small">Jedes Signal wird mit einer datenabhängigen Konfidenz gewichtet (wenig Daten → wenig Einfluss). Werte = P(Deutschland gewinnt).</p>
+            <div id="signals" class="signals"></div>
+          </section>
+
+          <section class="card">
+            <h2>Quellenstatus</h2>
+            <p class="muted small">Ausschließlich öffentliche RSS/Atom-Feeds und HTML-Scraping. Kein API-Key.</p>
+            <div id="sources" class="sources"></div>
+            <div class="spark-wrap">
+              <div class="muted small">Verlauf P(GER)</div>
+              <svg id="spark" class="spark" viewBox="0 0 300 48" preserveAspectRatio="none"></svg>
+            </div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <section class="card">
+            <h2>Medienartikel <span class="count" id="newsCount"></span></h2>
+            <div id="news" class="feed"></div>
+          </section>
+          <section class="card">
+            <h2>Reddit <span class="count" id="redditCount"></span></h2>
+            <div id="reddit" class="feed"></div>
+          </section>
+        </div>
+
+        <div class="grid">
+          <section class="card">
+            <h2>Experten-/Tipp-Prognosen <span class="count" id="expertsCount"></span></h2>
+            <div id="experts" class="feed"></div>
+          </section>
+          <section class="card">
+            <h2>Wettquoten <span class="count" id="oddsCount"></span></h2>
+            <div id="odds" class="feed"></div>
+          </section>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span>Vollständig lokal · keine kostenpflichtigen Dienste ·
+          <code>127.0.0.1:4712</code></span>
+        <span id="genState" class="muted"></span>
+      </footer>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
